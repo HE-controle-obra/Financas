@@ -210,15 +210,30 @@ create table custos_fixos (
   created_at timestamptz default now()
 );
 
+create table fixos_prazo (
+  id bigint generated always as identity primary key,
+  descricao text not null,
+  valor_mensal numeric not null,
+  parcela_atual int not null,
+  num_parcelas int not null,
+  inicio text not null,
+  categoria text not null,
+  cartao text not null,
+  notas text,
+  created_at timestamptz default now()
+);
+
 alter table gastos enable row level security;
 alter table parcelas enable row level security;
 alter table ativos enable row level security;
 alter table custos_fixos enable row level security;
+alter table fixos_prazo enable row level security;
 
 create policy "public_all" on gastos for all using (true) with check (true);
 create policy "public_all" on parcelas for all using (true) with check (true);
 create policy "public_all" on ativos for all using (true) with check (true);
-create policy "public_all" on custos_fixos for all using (true) with check (true);</pre>
+create policy "public_all" on custos_fixos for all using (true) with check (true);
+create policy "public_all" on fixos_prazo for all using (true) with check (true);</pre>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="copySQL()">Copiar SQL</button>
     </details>
 
@@ -269,6 +284,7 @@ create policy "public_all" on custos_fixos for all using (true) with check (true
     <button class="active" onclick="showPage('dashboard',this)">Dashboard</button>
     <button onclick="showPage('gastos',this)">Gastos</button>
     <button onclick="showPage('parceladas',this)">Parceladas</button>
+    <button onclick="showPage('fixos-prazo',this)">Fixos com prazo</button>
     <button onclick="showPage('investimentos',this)">Investimentos</button>
     <button onclick="showPage('fixos',this)">Custos Fixos</button>
   </nav>
@@ -417,6 +433,53 @@ create policy "public_all" on custos_fixos for all using (true) with check (true
   </div>
 </div>
 
+<!-- FIXOS COM PRAZO -->
+<div id="page-fixos-prazo" class="page">
+  <div style="display:grid;grid-template-columns:360px 1fr;gap:20px;">
+    <div class="card">
+      <div class="sec-title" style="margin-bottom:1rem;">Novo fixo com prazo</div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="field"><label>Descrição</label><input type="text" id="fp-desc" placeholder="Ex: Parcela HB20"></div>
+        <div class="field"><label>Valor mensal (R$)</label><input type="number" id="fp-valor" placeholder="0,00" step="0.01" min="0"></div>
+        <div class="field"><label>Parcela atual</label><input type="number" id="fp-atual" placeholder="Ex: 1" min="1"></div>
+        <div class="field"><label>Total de parcelas</label><input type="number" id="fp-total" placeholder="Ex: 24" min="2" max="120"></div>
+        <div class="field"><label>Mês de início</label><input type="month" id="fp-inicio"></div>
+        <div class="field">
+          <label>Categoria</label>
+          <select id="fp-cat">
+            <option>Transporte</option>
+            <option>Moradia</option>
+            <option>Educação</option>
+            <option>Saúde</option>
+            <option>Investimento</option>
+            <option>Outros</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Débito em</label>
+          <select id="fp-cartao">
+            <option>Nubank</option><option>Bradesco</option><option>Itaú Black</option><option>XP</option><option>Débito</option><option>PIX</option>
+          </select>
+        </div>
+        <div class="field"><label>Notas</label><input type="text" id="fp-notas" placeholder="Opcional"></div>
+        <button class="btn btn-primary" id="btn-add-fp" onclick="addFixoPrazo()">Adicionar</button>
+      </div>
+    </div>
+
+    <div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+        <div class="summary-card"><div class="label">Saída este mês</div><div class="value neg" id="fp-mes-val">–</div><div class="sub">compromissos ativos</div></div>
+        <div class="summary-card"><div class="label">Total restante</div><div class="value acc" id="fp-total-val">–</div><div class="sub">a pagar</div></div>
+        <div class="summary-card"><div class="label">Compromissos ativos</div><div class="value" id="fp-count">–</div><div class="sub">em andamento</div></div>
+      </div>
+
+      <div class="card" id="fp-lista">
+        <div class="loading"><span class="spinner"></span>Carregando...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- CUSTOS FIXOS -->
 <div id="page-fixos" class="page">
   <div style="display:grid;grid-template-columns:360px 1fr;gap:20px;">
@@ -504,7 +567,7 @@ create policy "public_all" on custos_fixos for all using (true) with check (true
 // ===================== CONFIG =====================
 let SB_URL = '', SB_KEY = '';
 let currentMes = '2026-06';
-let gastoCache = [], parcelaCache = [], ativoCache = [], fixoCache = [];
+let gastoCache = [], parcelaCache = [], ativoCache = [], fixoCache = [], fixoPrazoCache = [];
 
 const RENDA = 13020;
 
@@ -600,12 +663,14 @@ async function carregarTudo() {
     parcelaCache = await sbGet('parcelas', 'order=created_at.asc');
     ativoCache = await sbGet('ativos', 'order=tipo.asc,ticker.asc');
     fixoCache = await sbGet('custos_fixos', 'order=vencimento.asc');
-  } catch(e) { gastoCache=[]; parcelaCache=[]; ativoCache=[]; fixoCache=[]; }
+    fixoPrazoCache = await sbGet('fixos_prazo', 'order=created_at.asc');
+  } catch(e) { gastoCache=[]; parcelaCache=[]; ativoCache=[]; fixoCache=[]; fixoPrazoCache=[]; }
   renderDashboard();
   renderGastos();
   renderParcelas();
   renderAtivos();
   renderFixos();
+  renderFixosPrazo();
 }
 
 // ===================== UTILS =====================
@@ -880,13 +945,15 @@ function renderAtivos() {
 // ===================== DASHBOARD =====================
 function renderDashboard() {
   const totalFixos = fixoCache.filter(f=>f.ativo).reduce((s,f)=>s+parseFloat(f.valor),0);
+  const totalFixosPrazo = fixoPrazoCache.filter(f=>{ const c=getFPAtualMes(f); return c>=1&&c<=f.num_parcelas; }).reduce((s,f)=>s+parseFloat(f.valor_mensal),0);
   const total=gastoCache.reduce((s,g)=>s+parseFloat(g.valor),0);
-  const saldo=RENDA-total-totalFixos;
+  const saldo=RENDA-total-totalFixos-totalFixosPrazo;
   const ativas=parcelaCache.filter(p=>{const c=getParcelaAtualMes(p);return c>=1&&c<=p.num_parcelas;});
   const totalParcMes=ativas.reduce((s,p)=>s+parseFloat(p.valor_parcela),0);
-  document.getElementById('d-gasto').textContent=fmtBRL(total+totalFixos);
-  document.getElementById('d-gasto').className='value '+((total+totalFixos)>RENDA?'neg':'');
-  document.getElementById('d-gasto-sub').textContent=total>0?(((total+totalFixos)/RENDA*100).toFixed(1)+'% da renda'):'–';
+  const totalGeral = total+totalFixos+totalFixosPrazo;
+  document.getElementById('d-gasto').textContent=fmtBRL(totalGeral);
+  document.getElementById('d-gasto').className='value '+(totalGeral>RENDA?'neg':'');
+  document.getElementById('d-gasto-sub').textContent=totalGeral>0?((totalGeral/RENDA*100).toFixed(1)+'% da renda'):'–';
   document.getElementById('d-saldo').textContent=fmtBRL(Math.abs(saldo));
   document.getElementById('d-saldo').className='value '+(saldo>=0?'pos':'neg');
   document.getElementById('d-saldo-sub').textContent=saldo>=0?'sobrou':'no vermelho';
@@ -921,6 +988,89 @@ function renderDashboard() {
     <div class="card-sm"><div style="font-size:13px;font-weight:500;">${p.descricao}</div>
     <div style="font-size:11px;color:var(--muted);margin-top:2px;">${p.cartao} · ${c}/${p.num_parcelas}</div>
     <div style="font-family:'DM Mono',monospace;color:var(--accent);margin-top:6px;">${fmtBRL(p.valor_parcela)}</div></div>`;}).join('')+'</div>';}
+}
+
+// ===================== FIXOS COM PRAZO =====================
+function getFPAtualMes(f) {
+  const [a,m] = currentMes.split('-').map(Number);
+  const [ai,mi] = f.inicio.split('-').map(Number);
+  return f.parcela_atual + (a-ai)*12 + (m-mi);
+}
+
+async function addFixoPrazo() {
+  const desc = document.getElementById('fp-desc').value.trim();
+  const valor = parseFloat(document.getElementById('fp-valor').value);
+  const atual = parseInt(document.getElementById('fp-atual').value)||1;
+  const total = parseInt(document.getElementById('fp-total').value);
+  const inicio = document.getElementById('fp-inicio').value;
+  const cat = document.getElementById('fp-cat').value;
+  const cartao = document.getElementById('fp-cartao').value;
+  const notas = document.getElementById('fp-notas').value.trim();
+  if (!desc||!valor||!total||!inicio) { alert('Preencha todos os campos'); return; }
+  const btn = document.getElementById('btn-add-fp');
+  btn.disabled=true; btn.textContent='Salvando...';
+  try {
+    const rows = await sbInsert('fixos_prazo', {descricao:desc,valor_mensal:valor,parcela_atual:atual,num_parcelas:total,inicio,categoria:cat,cartao,notas});
+    fixoPrazoCache.push(rows[0]);
+    document.getElementById('fp-desc').value='';
+    document.getElementById('fp-valor').value='';
+    document.getElementById('fp-atual').value='';
+    document.getElementById('fp-total').value='';
+    document.getElementById('fp-notas').value='';
+    renderFixosPrazo(); renderDashboard();
+  } catch(e) { alert('Erro: '+e.message); }
+  btn.disabled=false; btn.textContent='Adicionar';
+}
+
+function deleteFixoPrazo(id) {
+  document.getElementById('confirm-delete-btn').onclick = async () => {
+    await sbDelete('fixos_prazo',id);
+    fixoPrazoCache = fixoPrazoCache.filter(f=>f.id!==id);
+    closeModal('modal-delete'); renderFixosPrazo(); renderDashboard();
+  };
+  document.getElementById('modal-delete').classList.add('open');
+}
+
+const FP_CORES = { Transporte:'badge-gold', Moradia:'badge-blue', Educação:'badge-blue', Saúde:'badge-purple', Investimento:'badge-gray', Outros:'badge-gray' };
+
+function renderFixosPrazo() {
+  const ativas = fixoPrazoCache.filter(f=>{ const c=getFPAtualMes(f); return c>=1&&c<=f.num_parcelas; });
+  const totalMes = ativas.reduce((s,f)=>s+parseFloat(f.valor_mensal),0);
+  const totalRest = fixoPrazoCache.reduce((s,f)=>{
+    const c=getFPAtualMes(f);
+    return s+Math.max(0,f.num_parcelas-c+1)*parseFloat(f.valor_mensal);
+  },0);
+  document.getElementById('fp-mes-val').textContent=fmtBRL(totalMes);
+  document.getElementById('fp-total-val').textContent=fmtBRL(totalRest);
+  document.getElementById('fp-count').textContent=ativas.length;
+
+  const lista = document.getElementById('fp-lista');
+  if (!fixoPrazoCache.length) { lista.innerHTML='<div class="empty"><p>Nenhum fixo com prazo cadastrado</p></div>'; return; }
+  lista.innerHTML = fixoPrazoCache.map(f=>{
+    const c=getFPAtualMes(f);
+    const ativa=c>=1&&c<=f.num_parcelas;
+    const pct=Math.min(100,Math.round(c/f.num_parcelas*100));
+    const label=ativa?`${c}/${f.num_parcelas}`:c>f.num_parcelas?'Quitado':'Futuro';
+    const bc=ativa?'badge-gold':c>f.num_parcelas?'badge-green':'badge-gray';
+    // calcular mês de término
+    const [ai,mi] = f.inicio.split('-').map(Number);
+    const mesesRestantes = f.num_parcelas - f.parcela_atual;
+    const fimDate = new Date(ai, mi-1+mesesRestantes);
+    const mesesNomes=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const fimLabel = mesesNomes[fimDate.getMonth()]+'/'+fimDate.getFullYear();
+    return `<div class="parcela-row" style="${!ativa?'opacity:0.5':''}">
+      <div class="parcela-info">
+        <h4>${f.descricao}</h4>
+        <p>${f.cartao} · ${f.categoria} · <span class="badge ${bc}">${label}</span> · termina ${fimLabel}</p>
+        ${f.notas?`<p style="margin-top:2px;">${f.notas}</p>`:''}
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      </div>
+      <div class="parcela-right">
+        <div><div class="valor">${fmtBRL(f.valor_mensal)}/mês</div><div class="parcnum">Restante: ${fmtBRL(Math.max(0,f.num_parcelas-c+1)*parseFloat(f.valor_mensal))}</div></div>
+        <button class="btn btn-danger btn-sm" onclick="deleteFixoPrazo(${f.id})">✕</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ===================== CUSTOS FIXOS =====================

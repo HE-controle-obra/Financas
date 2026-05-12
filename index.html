@@ -198,13 +198,27 @@ create table ativos (
   created_at timestamptz default now()
 );
 
+create table custos_fixos (
+  id bigint generated always as identity primary key,
+  descricao text not null,
+  valor numeric not null,
+  vencimento int not null,
+  categoria text not null,
+  cartao text not null,
+  ativo boolean default true,
+  notas text,
+  created_at timestamptz default now()
+);
+
 alter table gastos enable row level security;
 alter table parcelas enable row level security;
 alter table ativos enable row level security;
+alter table custos_fixos enable row level security;
 
 create policy "public_all" on gastos for all using (true) with check (true);
 create policy "public_all" on parcelas for all using (true) with check (true);
-create policy "public_all" on ativos for all using (true) with check (true);</pre>
+create policy "public_all" on ativos for all using (true) with check (true);
+create policy "public_all" on custos_fixos for all using (true) with check (true);</pre>
       <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="copySQL()">Copiar SQL</button>
     </details>
 
@@ -256,6 +270,7 @@ create policy "public_all" on ativos for all using (true) with check (true);</pr
     <button onclick="showPage('gastos',this)">Gastos</button>
     <button onclick="showPage('parceladas',this)">Parceladas</button>
     <button onclick="showPage('investimentos',this)">Investimentos</button>
+    <button onclick="showPage('fixos',this)">Custos Fixos</button>
   </nav>
 
   <!-- DASHBOARD -->
@@ -402,6 +417,77 @@ create policy "public_all" on ativos for all using (true) with check (true);</pr
   </div>
 </div>
 
+<!-- CUSTOS FIXOS -->
+<div id="page-fixos" class="page">
+  <div style="display:grid;grid-template-columns:360px 1fr;gap:20px;">
+    <div class="card">
+      <div class="sec-title" style="margin-bottom:1rem;">Novo custo fixo</div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="field"><label>Descrição</label><input type="text" id="cf-desc" placeholder="Ex: Parcela HB20"></div>
+        <div class="field"><label>Valor (R$)</label><input type="number" id="cf-valor" placeholder="0,00" step="0.01" min="0"></div>
+        <div class="field">
+          <label>Dia de vencimento</label>
+          <input type="number" id="cf-venc" placeholder="Ex: 10" min="1" max="31">
+        </div>
+        <div class="field">
+          <label>Categoria</label>
+          <select id="cf-cat">
+            <option>Moradia</option>
+            <option>Transporte</option>
+            <option>Saúde</option>
+            <option>Educação</option>
+            <option>Lazer</option>
+            <option>Investimento</option>
+            <option>Seguro</option>
+            <option>Assinatura</option>
+            <option>Outros</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Débito em</label>
+          <select id="cf-cartao">
+            <option>Nubank</option><option>Bradesco</option><option>Itaú Black</option><option>XP</option><option>Débito</option><option>PIX</option>
+          </select>
+        </div>
+        <div class="field"><label>Notas</label><input type="text" id="cf-notas" placeholder="Opcional"></div>
+        <button class="btn btn-primary" id="btn-add-cf" onclick="addCustoFixo()">Adicionar</button>
+      </div>
+    </div>
+
+    <div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:1.5rem;">
+        <div class="summary-card"><div class="label">Total fixos/mês</div><div class="value neg" id="cf-total">–</div><div class="sub">todos ativos</div></div>
+        <div class="summary-card"><div class="label">% da renda</div><div class="value acc" id="cf-pct">–</div><div class="sub">de R$ 13.020</div></div>
+        <div class="summary-card"><div class="label">Qtd de fixos</div><div class="value" id="cf-count">–</div><div class="sub">cadastrados</div></div>
+      </div>
+
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>Descrição</th>
+              <th>Categoria</th>
+              <th>Vencimento</th>
+              <th>Débito</th>
+              <th style="text-align:right">Valor</th>
+              <th>Ativo</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="cf-tbody">
+            <tr><td colspan="7"><div class="loading"><span class="spinner"></span>Carregando...</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:16px;" class="card">
+        <div class="sec-title" style="margin-bottom:1rem;">Por categoria</div>
+        <div id="cf-dist"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL DELETE -->
 <div class="modal-overlay" id="modal-delete">
   <div class="modal" style="width:360px;">
@@ -418,7 +504,7 @@ create policy "public_all" on ativos for all using (true) with check (true);</pr
 // ===================== CONFIG =====================
 let SB_URL = '', SB_KEY = '';
 let currentMes = '2026-06';
-let gastoCache = [], parcelaCache = [], ativoCache = [];
+let gastoCache = [], parcelaCache = [], ativoCache = [], fixoCache = [];
 
 const RENDA = 13020;
 
@@ -513,11 +599,13 @@ async function carregarTudo() {
     gastoCache = await sbGet('gastos', `mes=eq.${currentMes}&order=data.desc`);
     parcelaCache = await sbGet('parcelas', 'order=created_at.asc');
     ativoCache = await sbGet('ativos', 'order=tipo.asc,ticker.asc');
-  } catch(e) { gastoCache=[]; parcelaCache=[]; ativoCache=[]; }
+    fixoCache = await sbGet('custos_fixos', 'order=vencimento.asc');
+  } catch(e) { gastoCache=[]; parcelaCache=[]; ativoCache=[]; fixoCache=[]; }
   renderDashboard();
   renderGastos();
   renderParcelas();
   renderAtivos();
+  renderFixos();
 }
 
 // ===================== UTILS =====================
@@ -791,13 +879,14 @@ function renderAtivos() {
 
 // ===================== DASHBOARD =====================
 function renderDashboard() {
+  const totalFixos = fixoCache.filter(f=>f.ativo).reduce((s,f)=>s+parseFloat(f.valor),0);
   const total=gastoCache.reduce((s,g)=>s+parseFloat(g.valor),0);
-  const saldo=RENDA-total;
+  const saldo=RENDA-total-totalFixos;
   const ativas=parcelaCache.filter(p=>{const c=getParcelaAtualMes(p);return c>=1&&c<=p.num_parcelas;});
   const totalParcMes=ativas.reduce((s,p)=>s+parseFloat(p.valor_parcela),0);
-  document.getElementById('d-gasto').textContent=fmtBRL(total);
-  document.getElementById('d-gasto').className='value '+(total>RENDA?'neg':'');
-  document.getElementById('d-gasto-sub').textContent=total>0?((total/RENDA*100).toFixed(1)+'% da renda'):'–';
+  document.getElementById('d-gasto').textContent=fmtBRL(total+totalFixos);
+  document.getElementById('d-gasto').className='value '+((total+totalFixos)>RENDA?'neg':'');
+  document.getElementById('d-gasto-sub').textContent=total>0?(((total+totalFixos)/RENDA*100).toFixed(1)+'% da renda'):'–';
   document.getElementById('d-saldo').textContent=fmtBRL(Math.abs(saldo));
   document.getElementById('d-saldo').className='value '+(saldo>=0?'pos':'neg');
   document.getElementById('d-saldo-sub').textContent=saldo>=0?'sobrou':'no vermelho';
@@ -832,6 +921,94 @@ function renderDashboard() {
     <div class="card-sm"><div style="font-size:13px;font-weight:500;">${p.descricao}</div>
     <div style="font-size:11px;color:var(--muted);margin-top:2px;">${p.cartao} · ${c}/${p.num_parcelas}</div>
     <div style="font-family:'DM Mono',monospace;color:var(--accent);margin-top:6px;">${fmtBRL(p.valor_parcela)}</div></div>`;}).join('')+'</div>';}
+}
+
+// ===================== CUSTOS FIXOS =====================
+async function addCustoFixo() {
+  const desc = document.getElementById('cf-desc').value.trim();
+  const valor = parseFloat(document.getElementById('cf-valor').value);
+  const venc = parseInt(document.getElementById('cf-venc').value);
+  const cat = document.getElementById('cf-cat').value;
+  const cartao = document.getElementById('cf-cartao').value;
+  const notas = document.getElementById('cf-notas').value.trim();
+  if (!desc || !valor || !venc) { alert('Preencha descrição, valor e vencimento'); return; }
+  const btn = document.getElementById('btn-add-cf');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const rows = await sbInsert('custos_fixos', { descricao:desc, valor, vencimento:venc, categoria:cat, cartao, notas, ativo:true });
+    fixoCache.push(rows[0]);
+    document.getElementById('cf-desc').value = '';
+    document.getElementById('cf-valor').value = '';
+    document.getElementById('cf-venc').value = '';
+    document.getElementById('cf-notas').value = '';
+    renderFixos(); renderDashboard();
+  } catch(e) { alert('Erro: ' + e.message); }
+  btn.disabled = false; btn.textContent = 'Adicionar';
+}
+
+async function toggleFixo(id, ativo) {
+  await sbUpdate('custos_fixos', id, { ativo: !ativo });
+  const f = fixoCache.find(x => x.id === id);
+  if (f) f.ativo = !ativo;
+  renderFixos(); renderDashboard();
+}
+
+function deleteFixo(id) {
+  document.getElementById('confirm-delete-btn').onclick = async () => {
+    await sbDelete('custos_fixos', id);
+    fixoCache = fixoCache.filter(f => f.id !== id);
+    closeModal('modal-delete'); renderFixos(); renderDashboard();
+  };
+  document.getElementById('modal-delete').classList.add('open');
+}
+
+const CF_CORES = { Moradia:'badge-blue', Transporte:'badge-gold', Saúde:'badge-purple', Educação:'badge-blue', Lazer:'badge-green', Investimento:'badge-gray', Seguro:'badge-red', Assinatura:'badge-gray', Outros:'badge-gray' };
+
+function renderFixos() {
+  const ativos = fixoCache.filter(f => f.ativo);
+  const total = ativos.reduce((s,f) => s + parseFloat(f.valor), 0);
+  const pct = (total / RENDA * 100).toFixed(1);
+  document.getElementById('cf-total').textContent = fmtBRL(total);
+  document.getElementById('cf-pct').textContent = pct + '%';
+  document.getElementById('cf-count').textContent = fixoCache.length;
+
+  const tbody = document.getElementById('cf-tbody');
+  if (!fixoCache.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><p>Nenhum custo fixo cadastrado</p></div></td></tr>';
+    document.getElementById('cf-dist').innerHTML = '';
+    return;
+  }
+  tbody.innerHTML = fixoCache.map(f => `
+    <tr style="${!f.ativo ? 'opacity:0.45' : ''}">
+      <td>
+        <div style="font-size:13px;">${f.descricao}</div>
+        ${f.notas ? `<div style="font-size:11px;color:var(--muted);">${f.notas}</div>` : ''}
+      </td>
+      <td><span class="badge ${CF_CORES[f.categoria]||'badge-gray'}">${f.categoria}</span></td>
+      <td style="color:var(--muted);font-family:'DM Mono',monospace;">dia ${f.vencimento}</td>
+      <td style="color:var(--muted);font-size:12px;">${f.cartao}</td>
+      <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--red);">${fmtBRL(f.valor)}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="toggleFixo(${f.id},${f.ativo})" style="font-size:11px;">
+          ${f.ativo ? '✓ Ativo' : '✗ Inativo'}
+        </button>
+      </td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteFixo(${f.id})">✕</button></td>
+    </tr>`).join('');
+
+  // distribuição por categoria
+  const cats = {};
+  ativos.forEach(f => { cats[f.categoria] = (cats[f.categoria]||0) + parseFloat(f.valor); });
+  const max = Math.max(...Object.values(cats));
+  const coresDist = { Moradia:'var(--blue)', Transporte:'var(--accent)', Saúde:'var(--purple)', Educação:'var(--blue)', Lazer:'var(--green)', Investimento:'var(--muted)', Seguro:'var(--red)', Assinatura:'var(--muted2)', Outros:'var(--muted)' };
+  document.getElementById('cf-dist').innerHTML = Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([cat,val]) => `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <span class="badge ${CF_CORES[cat]||'badge-gray'}" style="width:100px;text-align:center;flex-shrink:0;">${cat}</span>
+      <div style="flex:1;background:var(--border2);border-radius:3px;height:5px;">
+        <div style="width:${(val/max*100).toFixed(1)}%;background:${coresDist[cat]||'var(--muted)'};height:5px;border-radius:3px;"></div>
+      </div>
+      <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);width:90px;text-align:right;">${fmtBRL(val)}</span>
+    </div>`).join('');
 }
 
 // ===================== INIT =====================
